@@ -11,7 +11,8 @@ function onGmailMessageOpen(e) {
   var sender = message.getFrom();
 
   var analysis = callGeminiAPI(subject, body, sender);
-  return buildSidebarCard(analysis, subject);
+
+  return buildSidebarCard(analysis.verdict, analysis.extracted_email, subject);
 }
 
 function callGeminiAPI(subject, body, sender) {
@@ -26,7 +27,7 @@ LEGIT: Returns this if the email is from a human student asking about an interns
 
 SPAM: Returns this if the email is an SEO sales pitch, a generic marketing bot, a 'website optimization' offer, or irrelevant junk.
 
-CRITICAL: You must ignore polite fluff. Focus on the sender's intent.
+CRITICAL INSTRUCTION: If the email is a form submission (e.g., from Webflow), look closely at the Email Body text and extract the actual applicant's email address so we can reply to them.
 
         Email Sender: ${sender}
         Email Subject: ${subject}
@@ -42,6 +43,10 @@ CRITICAL: You must ignore polite fluff. Focus on the sender's intent.
           "verdict": {
             "type": "string",
             "enum": ["LEGIT", "SPAM"]
+          },
+          "extracted_email": {
+            "type": "string",
+            "description": "The real applicant's email address found in the body. Leave blank if not found."
           }
         },
         "required": ["verdict"]
@@ -60,19 +65,20 @@ CRITICAL: You must ignore polite fluff. Focus on the sender's intent.
     var response = UrlFetchApp.fetch(url, options);
 
     if (response.getResponseCode() !== 200) {
-      return "HTTP_ERROR: " + response.getContentText();
+      return { verdict: "HTTP_ERROR: " + response.getContentText(), extracted_email: "" };
     }
 
     var json = JSON.parse(response.getContentText());
-    var verdictStr = json.candidates[0].content.parts[0].text;
-    return JSON.parse(verdictStr).verdict;
+    var resultStr = json.candidates[0].content.parts[0].text;
+
+    return JSON.parse(resultStr);
 
   } catch (error) {
-    return "CODE_ERROR: " + error.toString();
+    return { verdict: "CODE_ERROR: " + error.toString(), extracted_email: "" };
   }
 }
 
-function buildSidebarCard(verdict, subject) {
+function buildSidebarCard(verdict, extractedEmail, subject) {
   var card = CardService.newCardBuilder();
   var section = CardService.newCardSection();
 
@@ -83,9 +89,19 @@ function buildSidebarCard(verdict, subject) {
       .setImageUrl("https://www.gstatic.com/images/icons/material/system/2x/check_circle_black_24dp.png")
       .setImageStyle(CardService.ImageStyle.CIRCLE);
 
-    section.addWidget(CardService.newTextParagraph().setText("<b>Status:</b> This looks like a real student/human."));
+    //show extracted email in UI
+    var statusText = "<b>Status:</b> This looks like a real student.";
+    if (extractedEmail) {
+       statusText += `<br><b>Applicant Email:</b> ${extractedEmail}`;
+    }
+    section.addWidget(CardService.newTextParagraph().setText(statusText));
 
+    //pass extracted email to button click action
     var action = CardService.newAction().setFunctionName("createDraftReply");
+    if (extractedEmail) {
+        action.setParameters({ "realEmail": extractedEmail });
+    }
+
     section.addWidget(CardService.newTextButton()
       .setText("Draft Internship Reply")
       .setOnClickAction(action)
@@ -102,7 +118,6 @@ function buildSidebarCard(verdict, subject) {
       .setImageStyle(CardService.ImageStyle.CIRCLE);
 
     section.addWidget(CardService.newTextParagraph().setText("<b>Status:</b> This appears to be marketing or automated spam."));
-
     card.setHeader(header);
 
   } else {
@@ -123,13 +138,22 @@ function createDraftReply(e) {
 
   var messageId = e.messageMetadata.messageId;
   var message = GmailApp.getMessageById(messageId);
-  var thread = message.getThread();
+  var subject = message.getSubject();
+
+  //get hidden parameter passed from the button
+  var extractedEmail = e.parameters.realEmail;
 
   var replyBody = "Hi there,\n\nThank you for your interest in the internship program! Please send your resume and portfolio to us for review.\n\nBest,\nCinema Verde Team";
 
-  thread.createDraftReply(replyBody);
+  //if real email create a new draft to THEM
+  if (extractedEmail && extractedEmail !== "") {
+    GmailApp.createDraft(extractedEmail, "Re: " + subject, replyBody);
+  } else {
+    //j reply directly to the sender
+    message.createDraftReply(replyBody);
+  }
 
   return CardService.newActionResponseBuilder()
-    .setNotification(CardService.newNotification().setText("Draft Created!"))
+    .setNotification(CardService.newNotification().setText("Draft Created! Check your Drafts folder."))
     .build();
 }
