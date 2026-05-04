@@ -1,5 +1,4 @@
 const MODEL_NAME = "gemini-3-flash-preview";
-const API_KEY = PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY");
 
 function onGmailMessageOpen(e) {
   GmailApp.setCurrentMessageAccessToken(e.messageMetadata.accessToken);
@@ -12,10 +11,16 @@ function onGmailMessageOpen(e) {
 
   var analysis = callGeminiAPI(subject, body, sender);
 
-  return buildSidebarCard(analysis.verdict, analysis.extracted_email, subject);
+  return buildSidebarCard(analysis.verdict, analysis.extracted_email, subject, messageId);
 }
 
 function callGeminiAPI(subject, body, sender) {
+  const API_KEY = PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY");
+
+  if (!API_KEY) {
+     return { verdict: "CODE_ERROR: API Key missing from Script Properties.", extracted_email: "" };
+  }
+
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
 
   const payload = {
@@ -70,7 +75,6 @@ CRITICAL INSTRUCTION: If the email is a form submission (e.g., from Webflow), lo
 
     var json = JSON.parse(response.getContentText());
     var resultStr = json.candidates[0].content.parts[0].text;
-
     return JSON.parse(resultStr);
 
   } catch (error) {
@@ -78,7 +82,7 @@ CRITICAL INSTRUCTION: If the email is a form submission (e.g., from Webflow), lo
   }
 }
 
-function buildSidebarCard(verdict, extractedEmail, subject) {
+function buildSidebarCard(verdict, extractedEmail, subject, messageId) {
   var card = CardService.newCardBuilder();
   var section = CardService.newCardSection();
 
@@ -89,14 +93,12 @@ function buildSidebarCard(verdict, extractedEmail, subject) {
       .setImageUrl("https://www.gstatic.com/images/icons/material/system/2x/check_circle_black_24dp.png")
       .setImageStyle(CardService.ImageStyle.CIRCLE);
 
-    //show extracted email in UI
     var statusText = "<b>Status:</b> This looks like a real student.";
     if (extractedEmail) {
        statusText += `<br><b>Applicant Email:</b> ${extractedEmail}`;
     }
     section.addWidget(CardService.newTextParagraph().setText(statusText));
 
-    //pass extracted email to button click action
     var action = CardService.newAction().setFunctionName("createDraftReply");
     if (extractedEmail) {
         action.setParameters({ "realEmail": extractedEmail });
@@ -130,6 +132,33 @@ function buildSidebarCard(verdict, extractedEmail, subject) {
   }
 
   card.addSection(section);
+
+  //phase 1: data flywheel ui
+  var feedbackSection = CardService.newCardSection()
+    .setHeader("Data Flywheel: Corrections");
+
+  if (verdict === "LEGIT") {
+    var markSpamAction = CardService.newAction()
+      .setFunctionName("handleCorrection")
+      .setParameters({ "messageId": messageId, "correctedLabel": "SPAM" });
+
+    feedbackSection.addWidget(CardService.newTextButton()
+      .setText("Incorrect? Correct to SPAM")
+      .setOnClickAction(markSpamAction)
+      .setTextButtonStyle(CardService.TextButtonStyle.OUTLINED));
+
+  } else if (verdict === "SPAM") {
+    var markLegitAction = CardService.newAction()
+      .setFunctionName("handleCorrection")
+      .setParameters({ "messageId": messageId, "correctedLabel": "LEGIT" });
+
+    feedbackSection.addWidget(CardService.newTextButton()
+      .setText("Incorrect? Correct to LEGIT")
+      .setOnClickAction(markLegitAction)
+      .setTextButtonStyle(CardService.TextButtonStyle.OUTLINED));
+  }
+
+  card.addSection(feedbackSection);
   return card.build();
 }
 
@@ -140,20 +169,47 @@ function createDraftReply(e) {
   var message = GmailApp.getMessageById(messageId);
   var subject = message.getSubject();
 
-  //get hidden parameter passed from the button
   var extractedEmail = e.parameters.realEmail;
 
   var replyBody = "Hi there,\n\nThank you for your interest in the internship program! Please send your resume and portfolio to us for review.\n\nBest,\nCinema Verde Team";
 
-  //if real email create a new draft to THEM
   if (extractedEmail && extractedEmail !== "") {
     GmailApp.createDraft(extractedEmail, "Re: " + subject, replyBody);
   } else {
-    //j reply directly to the sender
     message.createDraftReply(replyBody);
   }
 
   return CardService.newActionResponseBuilder()
     .setNotification(CardService.newNotification().setText("Draft Created! Check your Drafts folder."))
+    .build();
+}
+
+//logic
+function handleCorrection(e) {
+  GmailApp.setCurrentMessageAccessToken(e.messageMetadata.accessToken);
+
+  var messageId = e.parameters.messageId;
+  var correctedLabel = e.parameters.correctedLabel;
+  var message = GmailApp.getMessageById(messageId);
+
+  var dateStr = Utilities.formatDate(message.getDate(), Session.getScriptTimeZone(), "MM-dd-yyyy");
+  var sender = message.getFrom();
+  var subject = message.getSubject();
+  var body = message.getPlainBody();
+
+  var sheetId = PropertiesService.getScriptProperties().getProperty("SHEET_ID");
+
+  if (!sheetId) {
+     return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText("Error: Sheet ID missing from Script Properties."))
+      .build();
+  }
+
+  var sheet = SpreadsheetApp.openById(sheetId).getActiveSheet();
+
+  sheet.appendRow([dateStr, sender, subject, body, correctedLabel, "UI Button"]);
+
+  return CardService.newActionResponseBuilder()
+    .setNotification(CardService.newNotification().setText("Flywheel Updated: Appended to Ground Truth!"))
     .build();
 }
