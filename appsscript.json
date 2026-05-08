@@ -11,13 +11,13 @@
     "https://www.googleapis.com/auth/spreadsheets"
   ],
   "gmail": {
-    "name": "InternSift",
+    "name": "InternSift by Cinema Verde",
     "logoUrl": "https://www.gstatic.com/images/icons/material/system/1x/mark_email_read_black_24dp.png",
     "contextualTriggers": [{
       "unconditional": {},
       "onTriggerFunction": "onGmailMessageOpen"
     }],
-    "primaryColor": "#673AB7",
-    "secondaryColor": "#673AB7"
+    "primaryColor":   "#1B4332",
+    "secondaryColor": "#6B46C1"
   }
 }
