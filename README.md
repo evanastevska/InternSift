@@ -32,6 +32,13 @@ and recall, minimizing false positives on real internship applications.
 The trained model is published on Hugging Face:
 [cinema-verde-spam-classifier](https://huggingface.co/evanastevska/cinema-verde-spam-classifier)
 
+## Data Flywheel
+The Gmail Add-on logs label corrections from the user directly to a Google Sheet. 
+A separate retraining pipeline (`retrain_pipeline.ipynb`) pulls this accumulated 
+data and retrains the DistilBERT model periodically, pushing updated weights back 
+to Hugging Face Hub. This creates a self-improving feedback loop as more real-world 
+data is collected.
+
 ## Tech Stack
 - Google Apps Script, Gmail API
 - Gemini API (google-genai)
