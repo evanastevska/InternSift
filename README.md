@@ -24,7 +24,7 @@ internship inquiries or B2B spam.
 - `classifier.js` — Gmail Add-on (Google Apps Script)
 - `appsscript.json` — Add-on configuration and OAuth scopes
 - `cloud-run/` — FastAPI app and Dockerfile for the model server
-- `CLEAN_final_imbalanced_text_classification_pipeline.ipynb` — ML research pipeline
+- `final_imbalanced_text_classification_pipeline.ipynb` — ML research pipeline
 - `retrain_pipeline.ipynb` — Retraining pipeline from Google Sheets data
 - `Cinema Verde Intern_Spam Dataset` — labeled dataset (150 emails)
 
