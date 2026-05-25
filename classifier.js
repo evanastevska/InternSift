@@ -23,7 +23,7 @@ function onGmailMessageOpen(e) {
     message.getDate(), Session.getScriptTimeZone(), "MMM d, yyyy"
   );
 
-  var analysis = callGeminiAPI(subject, body, sender);
+  var analysis = callClassifierAPI(subject, body, sender);
 
   return buildSidebarCard(
     analysis.verdict,
@@ -36,92 +36,33 @@ function onGmailMessageOpen(e) {
   );
 }
 
-function callGeminiAPI(subject, body, sender) {
-  const API_KEY = PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY");
+function callClassifierAPI(subject, body, sender) {
+  var url = "https://cinema-verde-classifier-578712543979.us-central1.run.app/classify";
 
-  if (!API_KEY) {
-    return {
-      verdict: "CONFIG_ERROR",
-      extracted_email: "",
-      confidence_note: "GEMINI_API_KEY is missing from Script Properties."
-    };
-  }
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
-
-  const payload = {
-    "contents": [{
-      "parts": [{
-        "text": `You are InternSift, an expert admin assistant for Cinema Verde — an environmental film festival based in Gainesville, FL.
-
-Your ONLY job is to classify incoming emails as either LEGIT or SPAM, and to extract a hidden applicant email when present.
-
-LEGIT: A real human — student, filmmaker, volunteer, or partner — reaching out with genuine intent. Signs include: personal tone, specific mention of skills or projects, follow-ups on applications, or legitimate organizational partnership inquiries.
-
-SPAM: Automated or bulk B2B outreach — SEO agencies, web design pitches, marketing tools, catering promos, merchandise vendors, or any irrelevant commercial solicitation.
-
-CRITICAL: If this email arrived via a web form (e.g., Webflow, Typeform, Gravity Forms), scan the body carefully and extract the actual sender's email address embedded in the form submission body.
-
-In your confidence_note, write one concise sentence (max 12 words) explaining the key signal that drove your verdict.
-
-Email Sender: ${sender}
-Email Subject: ${subject}
-Email Body: ${body}`
-      }]
-    }],
-    "generationConfig": {
-      "temperature": 0.0,
-      "responseMimeType": "application/json",
-      "responseSchema": {
-        "type": "object",
-        "properties": {
-          "verdict": {
-            "type": "string",
-            "enum": ["LEGIT", "SPAM"]
-          },
-          "extracted_email": {
-            "type": "string",
-            "description": "Actual applicant email found in form body. Empty string if not found."
-          },
-          "confidence_note": {
-            "type": "string",
-            "description": "One sentence (12 words or fewer) explaining the primary classification signal."
-          }
-        },
-        "required": ["verdict", "confidence_note"]
-      }
-    }
+  var payload = {
+    "sender": sender,
+    "subject": subject,
+    "body": body
   };
 
-  const options = {
+  var options = {
     "method": "post",
     "contentType": "application/json",
     "payload": JSON.stringify(payload),
     "muteHttpExceptions": true
   };
 
-  try {
-    var response = UrlFetchApp.fetch(url, options);
+  var response = fetchWithRetry(url, options);
 
-    if (response.getResponseCode() !== 200) {
-      return {
-        verdict: "HTTP_ERROR",
-        extracted_email: "",
-        confidence_note: "API returned HTTP " + response.getResponseCode()
-      };
-    }
-
-    var json      = JSON.parse(response.getContentText());
-    var resultStr = json.candidates[0].content.parts[0].text;
-    return JSON.parse(resultStr);
-
-  } catch (error) {
+  if (!response || response.getResponseCode() !== 200) {
     return {
-      verdict: "CODE_ERROR",
+      verdict: "HTTP_ERROR",
       extracted_email: "",
-      confidence_note: error.toString().substring(0, 80)
+      confidence_note: "Classifier service unavailable."
     };
   }
+
+  return JSON.parse(response.getContentText());
 }
 
 function buildSidebarCard(verdict, extractedEmail, confidenceNote, subject, sender, dateStr, messageId) {
@@ -308,4 +249,24 @@ function handleCorrection(e) {
       CardService.newNotification().setText("Correction logged to Ground Truth Sheet.")
     )
     .build();
+}
+
+function fetchWithRetry(url, options) {
+  var maxRetries = 3;
+  var waitMs = 10000;
+
+  for (var i = 0; i < maxRetries; i++) {
+    try {
+      var response = UrlFetchApp.fetch(url, options);
+      if (response.getResponseCode() === 200) return response;
+      if (i < maxRetries - 1) Utilities.sleep(waitMs);
+    } catch (error) {
+      if (i < maxRetries - 1) {
+        Utilities.sleep(waitMs);
+      } else {
+        throw error;
+      }
+    }
+  }
+  return null;
 }
